@@ -19,6 +19,16 @@ import anyio
 from typing_extensions import deprecated
 
 from browser_use.config import CONFIG
+from browser_use.dom.debug.highlights import (
+	inject_highlighting_script,
+	remove_highlighting_script,
+)
+from browser_use.dom.service import DomService
+from browser_use.dom.views import (
+	DOMSelectorMap,
+	EnhancedDOMTreeNode,
+	SerializedDOMState,
+)
 from browser_use.observability import observe_debug
 from browser_use.utils import _log_pretty_path, _log_pretty_url
 
@@ -30,10 +40,22 @@ os.environ['PW_TEST_SCREENSHOT_NO_FONTS_READY'] = '1'  # https://github.com/micr
 import psutil
 from bubus.helpers import retry
 from playwright._impl._api_structures import ViewportSize
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, InstanceOf, PrivateAttr, model_validator
+from pydantic import (
+	AliasChoices,
+	BaseModel,
+	ConfigDict,
+	Field,
+	InstanceOf,
+	PrivateAttr,
+	model_validator,
+)
 from uuid_extensions import uuid7str
 
-from browser_use.browser.profile import BROWSERUSE_DEFAULT_CHANNEL, BrowserChannel, BrowserProfile
+from browser_use.browser.profile import (
+	BROWSERUSE_DEFAULT_CHANNEL,
+	BrowserChannel,
+	BrowserProfile,
+)
 from browser_use.browser.types import (
 	Browser,
 	BrowserContext,
@@ -57,7 +79,6 @@ from browser_use.browser.views import (
 # Lazy imports for heavy DOM services to improve startup time
 # from browser_use.dom.clickable_element_processor.service import ClickableElementProcessor
 # from browser_use.dom.service import DomService
-from browser_use.dom.views import DOMElementNode, SelectorMap
 from browser_use.utils import (
 	is_new_tab_page,
 	match_url_with_domain_pattern,
@@ -101,8 +122,8 @@ def require_healthy_browser(usable_page=True, reopen_page=True):
 	This is why we must use CDP directly and skip playwright eventually.
 
 	Args:
-		usable_page: If True, check that the agent_current_page is valid and responsive before executing the method, if invalid log it but continue anyway
-		reopen_page: If True, attempt to reopen the page if it's crashed, invalid, or unresponsive (only applies if usable_page=True)
+	        usable_page: If True, check that the agent_current_page is valid and responsive before executing the method, if invalid log it but continue anyway
+	        reopen_page: If True, attempt to reopen the page if it's crashed, invalid, or unresponsive (only applies if usable_page=True)
 	"""
 
 	def decorator(func):
@@ -165,7 +186,8 @@ def require_healthy_browser(usable_page=True, reopen_page=True):
 						else:
 							try:
 								await self._recover_unresponsive_page(
-									func.__name__, timeout_ms=int(self.browser_profile.default_navigation_timeout or 5000) + 5_000
+									func.__name__,
+									timeout_ms=int(self.browser_profile.default_navigation_timeout or 5000) + 5_000,
 								)
 								page_url = self.agent_current_page.url if self.agent_current_page else 'unknown page'
 								self.logger.debug(
@@ -365,13 +387,13 @@ class BrowserSession(BaseModel):
 		"""
 		Starts the browser session by either connecting to an existing browser or launching a new one.
 		Precedence order for launching/connecting:
-			1. page=Page playwright object, will use its page.context as browser_context
-			2. browser_context=PlaywrightBrowserContext object, will use its browser
-			3. browser=PlaywrightBrowser object, will use its first available context
-			4. browser_pid=int, will connect to a local chromium-based browser via pid
-			5. wss_url=str, will connect to a remote playwright browser server via WSS
-			6. cdp_url=str, will connect to a remote chromium-based browser via CDP
-			7. playwright=Playwright object, will use its chromium instance to launch a new browser
+		        1. page=Page playwright object, will use its page.context as browser_context
+		        2. browser_context=PlaywrightBrowserContext object, will use its browser
+		        3. browser=PlaywrightBrowser object, will use its first available context
+		        4. browser_pid=int, will connect to a local chromium-based browser via pid
+		        5. wss_url=str, will connect to a remote playwright browser server via WSS
+		        6. cdp_url=str, will connect to a remote chromium-based browser via CDP
+		        7. playwright=Playwright object, will use its chromium instance to launch a new browser
 		"""
 
 		# if we're already initialized and the connection is still valid, return the existing session state and start from scratch
@@ -652,7 +674,9 @@ class BrowserSession(BaseModel):
 				self.logger.warning(f'⚠️ Error force-killing browser in BrowserSession.__del__: {type(e).__name__}: {e}')
 
 	@staticmethod
-	async def _start_global_playwright_subprocess(is_stealth: bool) -> PlaywrightOrPatchright:
+	async def _start_global_playwright_subprocess(
+		is_stealth: bool,
+	) -> PlaywrightOrPatchright:
 		"""Create and return a new playwright or patchright node.js subprocess / API connector"""
 		global GLOBAL_PLAYWRIGHT_API_OBJECT, GLOBAL_PATCHRIGHT_API_OBJECT
 		global GLOBAL_PLAYWRIGHT_EVENT_LOOP, GLOBAL_PATCHRIGHT_EVENT_LOOP
@@ -713,7 +737,14 @@ class BrowserSession(BaseModel):
 		# Create new playwright object
 		return await self._start_global_playwright_subprocess(is_stealth=is_stealth)
 
-	@retry(wait=1, retries=2, timeout=45, semaphore_limit=1, semaphore_scope='self', semaphore_lax=False)
+	@retry(
+		wait=1,
+		retries=2,
+		timeout=45,
+		semaphore_limit=1,
+		semaphore_scope='self',
+		semaphore_lax=False,
+	)
 	async def _close_browser_context(self) -> None:
 		"""Close browser context with retry logic."""
 		await self._unsafe_close_browser_context()
@@ -724,7 +755,14 @@ class BrowserSession(BaseModel):
 			await self.browser_context.close()
 			self.browser_context = None
 
-	@retry(wait=1, retries=2, timeout=10, semaphore_limit=1, semaphore_scope='self', semaphore_lax=False)
+	@retry(
+		wait=1,
+		retries=2,
+		timeout=10,
+		semaphore_limit=1,
+		semaphore_scope='self',
+		semaphore_lax=False,
+	)
 	async def _close_browser(self) -> None:
 		"""Close browser instance with retry logic."""
 		await self._unsafe_close_browser()
@@ -742,7 +780,10 @@ class BrowserSession(BaseModel):
 		semaphore_limit=1,
 		semaphore_scope='self',
 		semaphore_lax=True,
-		retry_on=(TimeoutError, psutil.TimeoutExpired),  # Only retry on timeouts, not NoSuchProcess
+		retry_on=(
+			TimeoutError,
+			psutil.TimeoutExpired,
+		),  # Only retry on timeouts, not NoSuchProcess
 	)
 	async def _terminate_browser_process(self, _hint: str = '') -> None:
 		"""Terminate browser process with retry logic."""
@@ -767,7 +808,14 @@ class BrowserSession(BaseModel):
 			finally:
 				self.browser_pid = None
 
-	@retry(wait=0.5, retries=2, timeout=30, semaphore_limit=1, semaphore_scope='self', semaphore_lax=True)
+	@retry(
+		wait=0.5,
+		retries=2,
+		timeout=30,
+		semaphore_limit=1,
+		semaphore_scope='self',
+		semaphore_lax=True,
+	)
 	async def _save_trace_recording(self) -> None:
 		"""Save browser trace recording."""
 		# TEMPORARILY DISABLED: Trace recording causing test timeouts
@@ -1493,7 +1541,11 @@ class BrowserSession(BaseModel):
 	# 	self.browser_profile.user_data_dir = fork_path
 	# 	self.browser_profile.prepare_user_data_dir()
 
-	@observe_debug(ignore_input=True, ignore_output=True, name='setup_current_page_change_listeners')
+	@observe_debug(
+		ignore_input=True,
+		ignore_output=True,
+		name='setup_current_page_change_listeners',
+	)
 	async def _setup_current_page_change_listeners(self) -> None:
 		# Uses a combination of:
 		# - visibilitychange events
@@ -1619,7 +1671,10 @@ class BrowserSession(BaseModel):
 				)
 
 	@observe_debug(
-		ignore_input=True, ignore_output=True, name='setup_viewports', metadata={'browser_profile': '{{browser_profile}}'}
+		ignore_input=True,
+		ignore_output=True,
+		name='setup_viewports',
+		metadata={'browser_profile': '{{browser_profile}}'},
 	)
 	async def _setup_viewports(self) -> None:
 		"""Resize any existing page viewports to match the configured size, set up storage_state, permissions, geolocation, etc."""
@@ -1736,7 +1791,10 @@ class BrowserSession(BaseModel):
 					# fallback to javascript resize if cdp setWindowBounds fails
 					await page.evaluate(
 						"""(width, height) => {window.resizeTo(width, height)}""",
-						[self.browser_profile.window_size['width'], self.browser_profile.window_size['height']],
+						[
+							self.browser_profile.window_size['width'],
+							self.browser_profile.window_size['height'],
+						],
 					)
 					return
 				except Exception:
@@ -1762,8 +1820,8 @@ class BrowserSession(BaseModel):
 		- Browser_context itself is closed/unusable
 
 		Args:
-			restart: If True, will attempt to create a new tab if no pages exist (valid contexts must always have at least one page open).
-			        If False, will only check connection status without side effects.
+		        restart: If True, will attempt to create a new tab if no pages exist (valid contexts must always have at least one page open).
+		                If False, will only check connection status without side effects.
 		"""
 		if not self.browser_context:
 			return False
@@ -1832,7 +1890,10 @@ class BrowserSession(BaseModel):
 				# if we have a self.browser_pid, check if it's still alive and serving a remote debugging port
 				# if so, don't clear it because there's a chance we can re-use it by just reconnecting to the same pid's port
 				proc = psutil.Process(self.browser_pid)
-				proc_is_alive = proc.status() not in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD)
+				proc_is_alive = proc.status() not in (
+					psutil.STATUS_ZOMBIE,
+					psutil.STATUS_DEAD,
+				)
 				assert proc_is_alive and '--remote-debugging-port' in ' '.join(proc.cmdline())
 			except Exception:
 				self.logger.info(f' ↳ Browser browser_pid={self.browser_pid} process is no longer running')
@@ -1846,7 +1907,7 @@ class BrowserSession(BaseModel):
 		"""Check if the user data directory has a conflicting browser process.
 
 		Returns:
-			True if there's a conflict (active process using this profile), False otherwise
+		        True if there's a conflict (active process using this profile), False otherwise
 		"""
 		if not self.browser_profile.user_data_dir:
 			return False
@@ -1905,7 +1966,7 @@ class BrowserSession(BaseModel):
 		"""Fallback to a temporary profile directory when the current one is locked.
 
 		Args:
-			reason: Human-readable reason for the fallback
+		        reason: Human-readable reason for the fallback
 		"""
 		old_dir = self.browser_profile.user_data_dir
 		self.browser_profile.user_data_dir = Path(tempfile.mkdtemp(prefix='browseruse-tmp-singleton-'))
@@ -1919,7 +1980,7 @@ class BrowserSession(BaseModel):
 		"""Create and prepare the user data dir, handling conflicts if needed.
 
 		Args:
-			check_conflicts: Whether to check for and handle singleton lock conflicts
+		        check_conflicts: Whether to check for and handle singleton lock conflicts
 		"""
 		if self.browser_profile.user_data_dir:
 			try:
@@ -2002,7 +2063,11 @@ class BrowserSession(BaseModel):
 				try:
 					path_obj = Path(path_value).expanduser().resolve()
 					path_obj.mkdir(parents=True, exist_ok=True)
-					setattr(self.browser_profile, path_name, str(path_obj) if path_name == 'traces_dir' else path_obj)
+					setattr(
+						self.browser_profile,
+						path_name,
+						str(path_obj) if path_name == 'traces_dir' else path_obj,
+					)
 				except Exception as e:
 					self.logger.error(f'❌ Failed to create {path_name} directory {path_value}: {e}')
 
@@ -2084,50 +2149,32 @@ class BrowserSession(BaseModel):
 		page = await self.get_current_page()
 		await page.wait_for_selector(selector, state='visible', timeout=timeout)
 
+	@observe_debug(name='inject_highlights', ignore_output=True, ignore_input=True)
+	@time_execution_async('--inject_highlights')
+	@retry(timeout=10, retries=0)
+	async def inject_highlights(self, dom_service: DomService, selector_map: DOMSelectorMap):
+		"""Inject highlights into the page."""
+		await inject_highlighting_script(dom_service, selector_map)
+
 	@observe_debug(name='remove_highlights', ignore_output=True, ignore_input=True)
 	@time_execution_async('--remove_highlights')
-	@retry(timeout=2, retries=0)
-	async def remove_highlights(self):
+	@retry(timeout=10, retries=0)
+	async def remove_highlights(self, dom_service: DomService):
 		"""
+		DEPRECATED
+
 		Removes all highlight overlays and labels created by the highlightElement function.
 		Handles cases where the page might be closed or inaccessible.
 		"""
-		page = await self.get_current_page()
-		try:
-			await page.evaluate(
-				"""
-				try {
-					// Remove the highlight container and all its contents
-					const container = document.getElementById('playwright-highlight-container');
-					if (container) {
-						container.remove();
-					}
+		await remove_highlighting_script(dom_service)
 
-					// Remove highlight attributes from elements
-					const highlightedElements = document.querySelectorAll('[browser-user-highlight-id^="playwright-highlight-"]');
-					highlightedElements.forEach(el => {
-						el.removeAttribute('browser-user-highlight-id');
-					});
-				} catch (e) {
-					console.error('Failed to remove highlights:', e);
-				}
-				"""
-			)
-		except Exception as e:
-			self.logger.debug(f'⚠️ Failed to remove highlights (this is usually ok): {type(e).__name__}: {e}')
-			# Don't raise the error since this is not critical functionality
-
-	@observe_debug(ignore_output=True, name='get_dom_element_by_index')
-	@require_healthy_browser(usable_page=True, reopen_page=True)
-	async def get_dom_element_by_index(self, index: int) -> DOMElementNode | None:
+	async def get_dom_element_by_index(self, index: int) -> EnhancedDOMTreeNode | None:
 		"""Get DOM element by index."""
 		selector_map = await self.get_selector_map()
 		return selector_map.get(index)
 
 	@time_execution_async('--click_element_node')
-	@observe_debug(ignore_input=True, name='click_element_node')
-	@require_healthy_browser(usable_page=True, reopen_page=True)
-	async def _click_element_node(self, element_node: DOMElementNode) -> str | None:
+	async def _click_element_node(self, element_node: EnhancedDOMTreeNode) -> str | None:
 		"""
 		Optimized method to click an element using xpath.
 		"""
@@ -2214,13 +2261,15 @@ class BrowserSession(BaseModel):
 						raise e
 					except Exception as e:
 						# Final fallback - try clicking by coordinates if available
-						if element_node.viewport_coordinates and element_node.viewport_coordinates.center:
+						if element_node.snapshot_node and element_node.snapshot_node.bounds:
 							try:
+								# TODO: instead of using the cached center, we should use the actual center of the element (easy, just get it by nodeBackendId)
 								self.logger.warning(
-									f'⚠️ Element click failed, falling back to coordinate click at ({element_node.viewport_coordinates.center.x}, {element_node.viewport_coordinates.center.y})'
+									f'⚠️ Element click failed, falling back to coordinate click at ({element_node.snapshot_node.bounds.x}, {element_node.snapshot_node.bounds.y})'
 								)
 								await page.mouse.click(
-									element_node.viewport_coordinates.center.x, element_node.viewport_coordinates.center.y
+									element_node.snapshot_node.bounds.x,
+									element_node.snapshot_node.bounds.y,
 								)
 								try:
 									await page.wait_for_load_state()
@@ -2269,7 +2318,11 @@ class BrowserSession(BaseModel):
 
 				# Only mark as unusable if it's actually a new tab page, otherwise preserve the real URL
 				if is_new_tab_page(page.url):
-					tab_info = TabInfo(page_id=page_id, url=page.url, title='ignore this tab and do not use it')
+					tab_info = TabInfo(
+						page_id=page_id,
+						url=page.url,
+						title='ignore this tab and do not use it',
+					)
 				else:
 					# Preserve the real URL and use a descriptive fallback title
 					# fallback_title = '(title unavailable, page possibly crashed / unresponsive)'
@@ -2320,18 +2373,31 @@ class BrowserSession(BaseModel):
 
 	# --- Page navigation ---
 	@observe_debug(ignore_input=True, ignore_output=True)
-	@retry(retries=0, timeout=30, wait=1, semaphore_timeout=10, semaphore_limit=1, semaphore_scope='self', semaphore_lax=True)
+	@retry(
+		retries=0,
+		timeout=30,
+		wait=1,
+		semaphore_timeout=10,
+		semaphore_limit=1,
+		semaphore_scope='self',
+		semaphore_lax=True,
+	)
 	@require_healthy_browser(usable_page=False, reopen_page=False)
-	async def navigate(self, url: str = 'about:blank', new_tab: bool = False, timeout_ms: int | None = None) -> Page:
+	async def navigate(
+		self,
+		url: str = 'about:blank',
+		new_tab: bool = False,
+		timeout_ms: int | None = None,
+	) -> Page:
 		"""
 		Universal navigation method that handles all navigation scenarios.
 
 		Args:
-			url: URL to navigate to (defaults to 'about:blank')
-			new_tab: If True, creates a new tab for navigation
+		        url: URL to navigate to (defaults to 'about:blank')
+		        new_tab: If True, creates a new tab for navigation
 
 		Returns:
-			Page: The page that was navigated
+		        Page: The page that was navigated
 		"""
 		# Clear loading status from previous page
 		self._current_page_loading_status = None
@@ -2929,7 +2995,10 @@ class BrowserSession(BaseModel):
 
 		# Calculate remaining time to meet minimum WAIT_TIME
 		elapsed = time.time() - start_time
-		remaining = max((timeout_overwrite or self.browser_profile.minimum_wait_page_load_time) - elapsed, 0)
+		remaining = max(
+			(timeout_overwrite or self.browser_profile.minimum_wait_page_load_time) - elapsed,
+			0,
+		)
 
 		# Skip expensive performance API logging - can cause significant delays on complex pages
 		bytes_used = None
@@ -3183,29 +3252,6 @@ class BrowserSession(BaseModel):
 
 		updated_state = await self._get_updated_state(include_screenshot=include_screenshot)
 
-		# Find out which elements are new
-		# Do this only if url has not changed
-		if cache_clickable_elements_hashes:
-			# Lazy import heavy DOM service
-			from browser_use.dom.clickable_element_processor.service import ClickableElementProcessor
-
-			# if we are on the same url as the last state, we can use the cached hashes
-			if self._cached_clickable_element_hashes and self._cached_clickable_element_hashes.url == updated_state.url:
-				# Pointers, feel free to edit in place
-				updated_state_clickable_elements = ClickableElementProcessor.get_clickable_elements(updated_state.element_tree)
-
-				for dom_element in updated_state_clickable_elements:
-					dom_element.is_new = (
-						ClickableElementProcessor.hash_dom_element(dom_element)
-						not in self._cached_clickable_element_hashes.hashes  # see which elements are new from the last state where we cached the hashes
-					)
-			# in any case, we need to cache the new hashes
-			self._cached_clickable_element_hashes = CachedClickableElementHashes(
-				url=updated_state.url,
-				hashes=ClickableElementProcessor.get_clickable_elements_hashes(updated_state.element_tree),
-			)
-
-		assert updated_state
 		self._cached_browser_state_summary = updated_state
 
 		return self._cached_browser_state_summary
@@ -3216,7 +3262,6 @@ class BrowserSession(BaseModel):
 	async def get_minimal_state_summary(self) -> BrowserStateSummary:
 		"""Get basic page info without DOM processing, but try to capture screenshot"""
 		from browser_use.browser.views import BrowserStateSummary
-		from browser_use.dom.views import DOMElementNode
 
 		page = await self.get_current_page()
 
@@ -3237,22 +3282,11 @@ class BrowserSession(BaseModel):
 		except Exception:
 			tabs_info = []
 
-		# Create minimal DOM element for error state
-		minimal_element_tree = DOMElementNode(
-			tag_name='body',
-			xpath='/body',
-			attributes={},
-			children=[],
-			is_visible=True,
-			parent=None,
-		)
-
 		# Check if current page is a PDF viewer
 		is_pdf_viewer = await self._is_pdf_viewer(page)
 
 		return BrowserStateSummary(
-			element_tree=minimal_element_tree,  # Minimal DOM tree
-			selector_map={},  # Empty selector map
+			dom_state=SerializedDOMState(_root=None, selector_map={}),
 			url=url,
 			title=title,
 			tabs=tabs_info,
@@ -3267,6 +3301,8 @@ class BrowserSession(BaseModel):
 	async def _get_updated_state(self, focus_element: int = -1, include_screenshot: bool = True) -> BrowserStateSummary:
 		"""Update and return state."""
 
+		dom_service: DomService | None = None
+
 		# Check if current page is still valid, if not switch to another available page
 		page = await self.get_current_page()
 
@@ -3277,19 +3313,6 @@ class BrowserSession(BaseModel):
 			# Fast path for empty pages - skip all expensive operations
 			if is_empty_page:
 				self.logger.debug(f'⚡ Fast path for empty page: {page.url}')
-
-				# Create minimal DOM state immediately
-				from browser_use.dom.views import DOMElementNode, DOMState
-
-				minimal_element_tree = DOMElementNode(
-					tag_name='body',
-					xpath='',
-					attributes={},
-					children=[],
-					is_visible=False,
-					parent=None,
-				)
-				content = DOMState(element_tree=minimal_element_tree, selector_map={})
 
 				# Get minimal tab info
 				tabs_info = await self.get_tabs_info()
@@ -3312,10 +3335,11 @@ class BrowserSession(BaseModel):
 					pixels_right=0,
 				)
 
+				from browser_use.dom.views import SerializedDOMState
+
 				# Return minimal state immediately
 				self.browser_state_summary = BrowserStateSummary(
-					element_tree=content.element_tree,
-					selector_map=content.selector_map,
+					dom_state=SerializedDOMState(_root=None, selector_map={}),
 					url=page.url,
 					title='New Tab' if is_new_tab_page(page.url) else 'Chrome Page',
 					tabs=tabs_info,
@@ -3329,13 +3353,6 @@ class BrowserSession(BaseModel):
 				)
 				return self.browser_state_summary
 
-			# Normal path for regular pages
-			self.logger.debug('🧹 Removing highlights...')
-			try:
-				await self.remove_highlights()
-			except TimeoutError:
-				self.logger.debug('Timeout to remove highlights')
-
 			# Check for PDF and auto-download if needed
 			try:
 				pdf_path = await self._auto_download_pdf_if_needed(page)
@@ -3345,38 +3362,36 @@ class BrowserSession(BaseModel):
 				self.logger.debug(f'PDF auto-download check failed: {type(e).__name__}: {e}')
 
 			self.logger.debug('🌳 Starting DOM processing...')
-			from browser_use.dom.service import DomService
+			async with DomService(self, page) as dom_service:
+				# Normal path for regular pages
+				self.logger.debug('🧹 Removing highlights...')
+				try:
+					await self.remove_highlights(dom_service)
+				except TimeoutError:
+					self.logger.debug('Timeout to remove highlights')
 
-			dom_service = DomService(page, logger=self.logger)
-			try:
-				content = await asyncio.wait_for(
-					dom_service.get_clickable_elements(
-						focus_element=focus_element,
-						viewport_expansion=self.browser_profile.viewport_expansion,
-						highlight_elements=self.browser_profile.highlight_elements,
-					),
-					timeout=45.0,  # 45 second timeout for DOM processing - generous for complex pages
-				)
-				self.logger.debug('✅ DOM processing completed')
-			except TimeoutError:
-				self.logger.warning(f'DOM processing timed out after 45 seconds for {page.url}')
-				self.logger.warning('🔄 Falling back to minimal DOM state to allow basic navigation...')
+				try:
+					dom_state, timing_info = await asyncio.wait_for(
+						dom_service.get_serialized_dom_tree(
+							previous_cached_state=self._cached_browser_state_summary.dom_state
+							if self._cached_browser_state_summary
+							else None,
+						),
+						timeout=120.0,  # 45 second timeout for DOM processing - generous for complex pages
+					)
 
-				# Create minimal DOM state for basic navigation
-				from browser_use.dom.views import DOMElementNode
+					await self.inject_highlights(dom_service, dom_state.selector_map)
 
-				minimal_element_tree = DOMElementNode(
-					tag_name='body',
-					xpath='/body',
-					attributes={},
-					children=[],
-					is_visible=True,
-					parent=None,
-				)
+					self.logger.debug('✅ DOM processing completed')
+				except TimeoutError:
+					self.logger.warning(f'DOM processing timed out after 45 seconds for {page.url}')
+					self.logger.warning('🔄 Falling back to minimal DOM state to allow basic navigation...')
 
-				from browser_use.dom.views import DOMState
+					# Create minimal DOM state for basic navigation
 
-				content = DOMState(element_tree=minimal_element_tree, selector_map={})
+					from browser_use.dom.views import SerializedDOMState
+
+					dom_state = SerializedDOMState(_root=None, selector_map={})
 
 			self.logger.debug('📋 Getting tabs info...')
 			tabs_info = await self.get_tabs_info()
@@ -3432,7 +3447,7 @@ class BrowserSession(BaseModel):
 
 			# Check if this is a minimal fallback state
 			browser_errors = []
-			if not content.selector_map:  # Empty selector map indicates fallback state
+			if not dom_state.selector_map:  # Empty selector map indicates fallback state
 				browser_errors.append(
 					f'DOM processing timed out for {page.url} - using minimal state. Basic navigation still available via go_to_url, scroll, and search actions.'
 				)
@@ -3441,8 +3456,7 @@ class BrowserSession(BaseModel):
 			is_pdf_viewer = await self._is_pdf_viewer(page)
 
 			self.browser_state_summary = BrowserStateSummary(
-				element_tree=content.element_tree,
-				selector_map=content.selector_map,
+				dom_state=dom_state,
 				url=page.url,
 				title=title,
 				tabs=tabs_info,
@@ -3463,6 +3477,17 @@ class BrowserSession(BaseModel):
 			if hasattr(self, 'browser_state_summary'):
 				return self.browser_state_summary
 			raise
+		finally:
+			if dom_service:
+				await self.remove_highlights(dom_service)
+
+			else:
+				try:
+					async with DomService(self, page) as dom_service:
+						await self.remove_highlights(dom_service)
+				except Exception:
+					self.logger.debug("Can't remove highlights, probably the dom_service is broken")
+					pass
 
 	# region - Page Health Check Helpers
 	@observe_debug(ignore_input=True)
@@ -3523,7 +3548,10 @@ class BrowserSession(BaseModel):
 					self.logger.warning(
 						f'🪓 Force-closing crashed page target_id={blocked_target_id} via CDP: {_log_pretty_url(page_url)}...'
 					)
-					await asyncio.wait_for(cdp_session.send('Target.closeTarget', {'targetId': blocked_target_id}), timeout=2.0)
+					await asyncio.wait_for(
+						cdp_session.send('Target.closeTarget', {'targetId': blocked_target_id}),
+						timeout=2.0,
+					)
 					# self.logger.debug(f'☠️ Successfully force-closed crashed page target_id={blocked_target_id} via CDP: {_log_pretty_url(page_url)}')
 					return True
 				else:
@@ -3663,6 +3691,24 @@ class BrowserSession(BaseModel):
 		"""Recover from an unresponsive page by closing and reopening it."""
 		self.logger.warning(f'⚠️ Page JS engine became unresponsive in {calling_method}(), attempting recovery...')
 		timeout_ms = min(3000, int(timeout_ms or self.browser_profile.default_navigation_timeout or 5000))
+
+		# Check if browser process is still alive before attempting recovery
+		if self.browser_pid:
+			try:
+				import psutil
+
+				proc = psutil.Process(self.browser_pid)
+				if proc.status() in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD):
+					self.logger.error(f'❌ Browser process {self.browser_pid} has crashed and cannot be recovered')
+					raise RuntimeError('Browser process has crashed - cannot recover unresponsive page')
+			except psutil.NoSuchProcess:
+				self.logger.error(f'❌ Browser process {self.browser_pid} no longer exists')
+				raise RuntimeError('Browser process has crashed - cannot recover unresponsive page')
+
+		# Check if browser connection is still alive
+		if self.browser and not self.browser.is_connected():
+			self.logger.error('❌ Browser connection lost - browser process may have crashed')
+			raise RuntimeError('Browser connection lost - cannot recover unresponsive page')
 
 		# Check if browser process is still alive before attempting recovery
 		if self.browser_pid:
@@ -3905,15 +3951,15 @@ class BrowserSession(BaseModel):
 
 	@classmethod
 	@time_execution_sync('--enhanced_css_selector_for_element')
-	def _enhanced_css_selector_for_element(cls, element: DOMElementNode, include_dynamic_attributes: bool = True) -> str:
+	def _enhanced_css_selector_for_element(cls, element: EnhancedDOMTreeNode, include_dynamic_attributes: bool = True) -> str:
 		"""
 		Creates a CSS selector for a DOM element, handling various edge cases and special characters.
 
 		Args:
-						element: The DOM element to create a selector for
+		                                element: The DOM element to create a selector for
 
 		Returns:
-						A valid CSS selector string
+		                                A valid CSS selector string
 		"""
 		try:
 			# Get base selector from XPath
@@ -4002,16 +4048,18 @@ class BrowserSession(BaseModel):
 					collapsed_value = re.sub(r'\s+', ' ', value).strip()
 					# Escape embedded double-quotes.
 					safe_value = collapsed_value.replace('"', '\\"')
-					css_selector += f'[{safe_attribute}*="{safe_value}"]'
+
+					# if safe_value is empty, don't add it to the selector (could be empty after the filters)
+					if safe_value:
+						css_selector += f'[{safe_attribute}*="{safe_value}"]'
 				else:
 					css_selector += f'[{safe_attribute}="{value}"]'
 
 			return css_selector
 
 		except Exception:
-			# Fallback to a more basic selector if something goes wrong
-			tag_name = element.tag_name or '*'
-			return f"{tag_name}[highlight_index='{element.highlight_index}']"
+			# Fallback: use XPath as a CSS selector (via Playwright's "xpath=" pseudo-selector)
+			return f'xpath={element.xpath or "//" + (element.tag_name or "*")}'
 
 	@require_healthy_browser(usable_page=True, reopen_page=True)
 	@time_execution_async('--is_visible')
@@ -4032,12 +4080,12 @@ class BrowserSession(BaseModel):
 	@require_healthy_browser(usable_page=True, reopen_page=True)
 	@time_execution_async('--get_locate_element')
 	@observe_debug(ignore_input=True, name='get_locate_element')
-	async def get_locate_element(self, element: DOMElementNode) -> ElementHandle | None:
+	async def get_locate_element(self, element: EnhancedDOMTreeNode) -> ElementHandle | None:
 		page = await self.get_current_page()
 		current_frame = page
 
 		# Start with the target element and collect all parents
-		parents: list[DOMElementNode] = []
+		parents: list[EnhancedDOMTreeNode] = []
 		current = element
 		while current.parent is not None:
 			parent = current.parent
@@ -4062,7 +4110,8 @@ class BrowserSession(BaseModel):
 				current_frame = current_frame.frame_locator(f'xpath={parent.xpath}')
 
 		css_selector = self._enhanced_css_selector_for_element(
-			element, include_dynamic_attributes=self.browser_profile.include_dynamic_attributes
+			element,
+			include_dynamic_attributes=self.browser_profile.include_dynamic_attributes,
 		)
 
 		try:
@@ -4204,7 +4253,7 @@ class BrowserSession(BaseModel):
 	@require_healthy_browser(usable_page=True, reopen_page=True)
 	@time_execution_async('--input_text_element_node')
 	@observe_debug(ignore_input=True, name='input_text_element_node')
-	async def _input_text_element_node(self, element_node: DOMElementNode, text: str):
+	async def _input_text_element_node(self, element_node: EnhancedDOMTreeNode, text: str):
 		"""
 		Input text into an element with proper error handling and state management.
 		Handles different types of input fields and ensures proper element state before input.
@@ -4277,7 +4326,7 @@ class BrowserSession(BaseModel):
 			self.logger.debug(
 				f'❌ Failed to input text into element: {repr(element_node)} on page {page_url}: {type(e).__name__}: {e}'
 			)
-			raise BrowserError(f'Failed to input text into index {element_node.highlight_index}')
+			raise BrowserError(f'Failed to input text into element: {repr(element_node)}')
 
 	@require_healthy_browser(usable_page=True, reopen_page=True)
 	@time_execution_async('--switch_to_tab')
@@ -4326,12 +4375,13 @@ class BrowserSession(BaseModel):
 		return page
 
 	# region - Helper methods for easier access to the DOM
+
 	@observe_debug(name='get_selector_map', ignore_output=True, ignore_input=True)
 	@require_healthy_browser(usable_page=True, reopen_page=True)
-	async def get_selector_map(self) -> SelectorMap:
+	async def get_selector_map(self) -> DOMSelectorMap:
 		if self._cached_browser_state_summary is None:
 			return {}
-		return self._cached_browser_state_summary.selector_map
+		return self._cached_browser_state_summary.dom_state.selector_map
 
 	@observe_debug(ignore_input=True, ignore_output=True, name='get_element_by_index')
 	@require_healthy_browser(usable_page=True, reopen_page=True)
@@ -4351,17 +4401,13 @@ class BrowserSession(BaseModel):
 			return False
 
 	@staticmethod
-	def is_file_input(node: DOMElementNode) -> bool:
-		return (
-			isinstance(node, DOMElementNode)
-			and getattr(node, 'tag_name', '').lower() == 'input'
-			and node.attributes.get('type', '').lower() == 'file'
-		)
+	def is_file_input(node: EnhancedDOMTreeNode) -> bool:
+		return node.tag_name == 'input' and node.attributes.get('type', '').lower() == 'file'
 
 	@require_healthy_browser(usable_page=True, reopen_page=True)
 	async def find_file_upload_element_by_index(
 		self, index: int, max_height: int = 3, max_descendant_depth: int = 3
-	) -> DOMElementNode | None:
+	) -> EnhancedDOMTreeNode | None:
 		"""
 		Find the closest file input to the selected element by traversing the DOM bottom-up.
 		At each level (up to max_height ancestors):
@@ -4377,12 +4423,12 @@ class BrowserSession(BaseModel):
 
 			candidate_element = selector_map[index]
 
-			def find_file_input_in_descendants(node: DOMElementNode, depth: int) -> DOMElementNode | None:
-				if depth < 0 or not isinstance(node, DOMElementNode):
+			def find_file_input_in_descendants(node: EnhancedDOMTreeNode, depth: int) -> EnhancedDOMTreeNode | None:
+				if depth < 0 or not isinstance(node, EnhancedDOMTreeNode):
 					return None
 				if self.is_file_input(node):
 					return node
-				for child in getattr(node, 'children', []):
+				for child in node.children:
 					result = find_file_input_in_descendants(child, depth - 1)
 					if result:
 						return result
@@ -4398,9 +4444,9 @@ class BrowserSession(BaseModel):
 				if result:
 					return result
 				# 3. Check all siblings and their descendants
-				parent = getattr(current, 'parent', None)
+				parent = current.parent
 				if parent:
-					for sibling in getattr(parent, 'children', []):
+					for sibling in parent.children:
 						if sibling is current:
 							continue
 						if self.is_file_input(sibling):
@@ -4491,11 +4537,11 @@ class BrowserSession(BaseModel):
 		Scroll using CDP Input.synthesizeScrollGesture for universal compatibility.
 
 		Args:
-			page: The page to scroll
-			pixels: Number of pixels to scroll (positive = up, negative = down)
+		        page: The page to scroll
+		        pixels: Number of pixels to scroll (positive = up, negative = down)
 
 		Returns:
-			True if successful, False if failed
+		        True if successful, False if failed
 		"""
 		try:
 			# Use CDP to synthesize scroll gesture - works in all contexts including PDFs
@@ -4704,7 +4750,7 @@ class BrowserSession(BaseModel):
 		Parameters:
 		-----------
 		cache_clickable_elements_hashes: bool
-			If True, cache the clickable elements hashes for the current state.
+		        If True, cache the clickable elements hashes for the current state.
 		include_screenshot: bool
 			If True, include screenshot in the state summary. Set to False to improve performance
 			when screenshots are not needed (e.g., in multi_act element validation).
